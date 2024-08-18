@@ -62,6 +62,15 @@ public class ImportController {
         }
     }
 
+    public List<Client> getClients() {
+        ResponseEntity<Client[]> response = restTemplate.postForEntity(
+                oldSystemApiUrl + "/clients",
+                null,
+                Client[].class
+        );
+        return Arrays.asList(Objects.requireNonNull(response.getBody()));
+    }
+
     public void importPatientProfiles(List<Client> clients) {
         for (Client client : clients) {
             PatientProfile existingProfile = patientProfileRepository.findPatientProfileByOldClientGuid(client.getGuid());
@@ -74,15 +83,6 @@ public class ImportController {
                 patientProfileRepository.save(newProfile);
             }
         }
-    }
-
-    public List<Client> getClients() {
-        ResponseEntity<Client[]> response = restTemplate.postForEntity(
-                oldSystemApiUrl + "/clients",
-                null,
-                Client[].class
-        );
-        return Arrays.asList(Objects.requireNonNull(response.getBody()));
     }
 
     public List<NoteResponse> getNotesByClient(Client client) {
