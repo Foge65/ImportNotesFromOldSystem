@@ -6,9 +6,10 @@ import com.cleverdevsoftware.dto.NoteResponse;
 import com.cleverdevsoftware.entity.CompanyUser;
 import com.cleverdevsoftware.entity.PatientNote;
 import com.cleverdevsoftware.entity.PatientProfile;
-import com.cleverdevsoftware.repository.CompanyUserRepository;
-import com.cleverdevsoftware.repository.PatientNoteRepository;
 import com.cleverdevsoftware.repository.PatientProfileRepository;
+import com.cleverdevsoftware.service.NoteService;
+import com.cleverdevsoftware.service.ProfileService;
+import com.cleverdevsoftware.service.UserService;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -33,8 +34,9 @@ public class ImportController {
     private final RestTemplate restTemplate;
 
     private final PatientProfileRepository patientProfileRepository;
-    private final CompanyUserRepository companyUserRepository;
-    private final PatientNoteRepository patientNoteRepository;
+    private final ProfileService profileService;
+    private final UserService userService;
+    private final NoteService noteService;
 
     @Value("${old.system.api.url}")
     private String oldSystemApiUrl;
@@ -44,15 +46,18 @@ public class ImportController {
     public void importNotes() {
         try {
             List<Client> clients = getClients();
-            importPatientProfiles(clients);
+            profileService.importPatientProfiles(clients);
             for (Client client : clients) {
-                List<NoteResponse> notes = getNotesByClient(client);
-                for (NoteResponse note : notes) {
+                List<NoteResponse> notes = getNotesByClient(client, "1999-01-01", "2025-01-01");
+                for (NoteResponse noteResponse : notes) {
                     PatientProfile patientProfile = patientProfileRepository.findPatientProfileByOldClientGuid(client.getGuid());
-                    if (patientProfile != null && isActivePatient(patientProfile)) {
-                        CompanyUser companyUser = getOrCreateUser(note.getLoggedUser());
-                        if (companyUser != null) {
-                            importOrUpdateNote(note, patientProfile, companyUser);
+                    if (isActivePatient(patientProfile)) {
+                        CompanyUser companyUser = userService.getOrCreateUser(noteResponse.getLoggedUser());
+                        PatientNote patientNote = noteService.getPatientNote(patientProfile, noteResponse, companyUser);
+                        if (patientNote != null) {
+                            noteService.importNote(noteResponse, patientNote, companyUser);
+                        } else {
+                            noteService.createNote(noteResponse, patientProfile, companyUser);
                         }
                     }
                 }
@@ -71,27 +76,13 @@ public class ImportController {
         return Arrays.asList(Objects.requireNonNull(response.getBody()));
     }
 
-    public void importPatientProfiles(List<Client> clients) {
-        for (Client client : clients) {
-            PatientProfile existingProfile = patientProfileRepository.findPatientProfileByOldClientGuid(client.getGuid());
-            if (existingProfile == null) {
-                PatientProfile newProfile = new PatientProfile();
-                newProfile.setFirstName(client.getFirstName());
-                newProfile.setLastName(client.getLastName());
-                newProfile.setOldClientGuid(client.getGuid());
-                newProfile.setStatusId(client.getStatus());
-                patientProfileRepository.save(newProfile);
-            }
-        }
-    }
-
-    public List<NoteResponse> getNotesByClient(Client client) {
+    public List<NoteResponse> getNotesByClient(Client client, String dateFrom, String dateTo) {
         ResponseEntity<NoteResponse[]> response = restTemplate.postForEntity(
                 oldSystemApiUrl + "/notes?agency=" + client.getAgency(),
                 new NoteRequest(
                         client.getAgency(),
-                        "1999-01-01",
-                        "2025-01-01",
+                        dateFrom,
+                        dateTo,
                         client.getGuid()
                 ),
                 NoteResponse[].class
@@ -106,40 +97,6 @@ public class ImportController {
 
     private boolean isActivePatient(PatientProfile patient) {
         return patient.getStatusId() == 200 || patient.getStatusId() == 210 || patient.getStatusId() == 230;
-    }
-
-    private CompanyUser getOrCreateUser(String login) {
-        return companyUserRepository.findByLogin(login)
-                .orElseGet(() -> {
-                    CompanyUser newUser = new CompanyUser();
-                    newUser.setLogin(login);
-                    return companyUserRepository.save(newUser);
-                });
-    }
-
-    private void importOrUpdateNote(NoteResponse noteResponse, PatientProfile patient, CompanyUser createdByUser) {
-        PatientNote existingNote = patientNoteRepository.findByPatientAndCreatedDateTimeAndCreatedByUser(
-                patient,
-                noteResponse.getCreatedDateTime(),
-                createdByUser
-        );
-        if (existingNote != null) {
-            if (noteResponse.getModifiedDateTime().isAfter(existingNote.getLastModifiedDateTime())) {
-                existingNote.setLastModifiedDateTime(noteResponse.getModifiedDateTime());
-                existingNote.setLastModifiedByUser(createdByUser);
-                existingNote.setNote(noteResponse.getComments());
-                patientNoteRepository.save(existingNote);
-            }
-        } else {
-            PatientNote newNote = new PatientNote();
-            newNote.setCreatedDateTime(noteResponse.getCreatedDateTime());
-            newNote.setLastModifiedDateTime(noteResponse.getModifiedDateTime());
-            newNote.setCreatedByUser(createdByUser);
-            newNote.setLastModifiedByUser(createdByUser);
-            newNote.setNote(noteResponse.getComments());
-            newNote.setPatient(patient);
-            patientNoteRepository.save(newNote);
-        }
     }
 
 }
