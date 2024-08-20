@@ -6,7 +6,6 @@ import com.cleverdevsoftware.newsystem.dto.NoteResponse;
 import com.cleverdevsoftware.newsystem.entity.CompanyUser;
 import com.cleverdevsoftware.newsystem.entity.PatientNote;
 import com.cleverdevsoftware.newsystem.entity.PatientProfile;
-import com.cleverdevsoftware.newsystem.repository.PatientProfileRepository;
 import com.cleverdevsoftware.newsystem.service.NoteService;
 import com.cleverdevsoftware.newsystem.service.ProfileService;
 import com.cleverdevsoftware.newsystem.service.UserService;
@@ -33,7 +32,6 @@ public class ImportController {
 
     private final RestTemplate restTemplate;
 
-    private final PatientProfileRepository patientProfileRepository;
     private final ProfileService profileService;
     private final UserService userService;
     private final NoteService noteService;
@@ -41,24 +39,27 @@ public class ImportController {
     @Value("${old.system.api.url}")
     private String oldSystemApiUrl;
 
-    //    @Scheduled(cron = "0 15 1/2 * * ?")
-    @Scheduled(cron = "*/5 * * * * ?")
+    @Scheduled(cron = "0 15 1/2 * * ?")
     @Transactional
     public void importNotes() {
         try {
             List<Client> clients = getClients();
-            profileService.importPatientProfiles(clients);
             for (Client client : clients) {
                 List<NoteResponse> notes = getNotesByClient(client, "1999-01-01", "2025-01-01");
                 for (NoteResponse noteResponse : notes) {
-                    PatientProfile patientProfile = patientProfileRepository.findPatientProfileByOldClientGuid(client.getGuid());
-                    if (isActivePatient(patientProfile)) {
-                        CompanyUser companyUser = userService.getOrCreateUser(noteResponse.getLoggedUser());
-                        PatientNote patientNote = noteService.getPatientNote(patientProfile, noteResponse, companyUser);
-                        if (patientNote != null) {
-                            noteService.importNote(noteResponse, patientNote, companyUser);
-                        } else {
-                            noteService.createNote(noteResponse, patientProfile, companyUser);
+                    PatientProfile patientProfile = profileService.importPatientProfile(client);
+                    if (patientProfile == null) {
+                        profileService.createPatientProfile(client);
+                    } else {
+                        profileService.importPatientProfile(client);
+                        if (isActivePatient(patientProfile)) {
+                            CompanyUser companyUser = userService.getOrCreateUser(noteResponse.getLoggedUser());
+                            PatientNote patientNote = noteService.getPatientNote(patientProfile, noteResponse, companyUser);
+                            if (patientNote == null) {
+                                noteService.createNote(noteResponse, patientProfile, companyUser);
+                            } else {
+                                noteService.importNote(noteResponse, patientNote, companyUser);
+                            }
                         }
                     }
                 }
